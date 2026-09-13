@@ -870,6 +870,7 @@ impl Library {
         shelf: Shelf,
         cx: &mut Context<Self>,
     ) {
+        let remembered = tracks.clone();
         self.mutate_playlist(
             PlaylistMutation {
                 action: "create playlist",
@@ -902,7 +903,13 @@ impl Library {
                     }
                 }))
             },
-            Self::insert_playlist,
+            move |this, playlist, cx| {
+                let id = playlist.id.clone();
+                this.insert_playlist(playlist, cx);
+                if shelf.local() {
+                    this.contents.insert(id, remembered.into_iter().collect());
+                }
+            },
             cx,
         );
     }
@@ -958,9 +965,17 @@ impl Library {
     pub fn add_tracks_to_playlist(
         &mut self,
         playlist_id: String,
-        track_ids: Vec<String>,
+        mut track_ids: Vec<String>,
         cx: &mut Context<Self>,
     ) {
+        let shelf = Shelf::of(&playlist_id);
+        if shelf.local() {
+            let known = self.contents.get(&playlist_id);
+            let mut unique = HashSet::new();
+            track_ids.retain(|id| {
+                unique.insert(id.clone()) && known.is_none_or(|known| !known.contains(id))
+            });
+        }
         if track_ids.is_empty() {
             return;
         }
@@ -977,7 +992,7 @@ impl Library {
                 done: "toast-track-added",
                 name,
                 target,
-                shelf: Shelf::of(&playlist_id),
+                shelf,
                 invalidated: Some(playlist_id.clone()),
             },
             move |client| async move {
